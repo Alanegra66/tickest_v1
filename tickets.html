@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestión de Pedidos</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+    import { getFirestore, collection, addDoc, query, where, orderBy, getDocs, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDiTE5FPySHHIL3SJDgh79xjeOR9Nv0jLo",
+      authDomain: "plataforma-tickets.firebaseapp.com",
+      projectId: "plataforma-tickets",
+      storageBucket: "plataforma-tickets.firebasestorage.app",
+      messagingSenderId: "89978713431",
+      appId: "1:89978713431:web:597ed285d603a427baba12"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth();
+    const db = getFirestore();
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const loginSection = document.getElementById('login-section');
+      const dashboardSection = document.getElementById('dashboard-section');
+      const formularioTicket = document.getElementById('form-ticket');
+
+      onAuthStateChanged(auth, user => {
+        if (user) {
+          loginSection.classList.add('d-none');
+          dashboardSection.classList.remove('d-none');
+          cargarTickets();
+          document.getElementById('user-email').textContent = user.email;
+        } else {
+          loginSection.classList.remove('d-none');
+          dashboardSection.classList.add('d-none');
+        }
+      });
+
+      document.getElementById('form-login').addEventListener('submit', async e => {
+        e.preventDefault();
+        const email = e.target.email.value;
+        const password = e.target.password.value;
+        try {
+          await signInWithEmailAndPassword(auth, email, password);
+        } catch (error) {
+          Swal.fire('Error', error.message, 'error');
+        }
+      });
+
+      document.getElementById('form-register').addEventListener('submit', async e => {
+        e.preventDefault();
+        const email = e.target.email.value;
+        const password = e.target.password.value;
+        try {
+          await createUserWithEmailAndPassword(auth, email, password);
+        } catch (error) {
+          Swal.fire('Error', error.message, 'error');
+        }
+      });
+
+      formularioTicket.addEventListener('submit', async e => {
+        e.preventDefault();
+        const titulo = e.target.titulo.value;
+        const descripcion = e.target.descripcion.value;
+        const prioridad = e.target.prioridad.value;
+        const estado = "Pendiente";
+        try {
+          await addDoc(collection(db, 'tickets'), {
+            titulo,
+            descripcion,
+            prioridad,
+            estado,
+            fecha: Timestamp.now()
+          });
+          e.target.reset();
+          Swal.fire('Éxito', 'Pedido creado correctamente', 'success');
+          cargarTickets();
+        } catch (error) {
+          Swal.fire('Error', error.message, 'error');
+        }
+      });
+
+      document.getElementById('cerrar-sesion').addEventListener('click', () => signOut(auth));
+    });
+
+    let chart;
+    async function cargarTickets() {
+      const contenedor = document.getElementById('tickets-list');
+      contenedor.innerHTML = '';
+      const estadoFiltro = document.getElementById('filtro-estado').value;
+      const prioridadFiltro = document.getElementById('filtro-prioridad').value;
+      let q = collection(db, 'tickets');
+      let queryFinal = query(q);
+      if (estadoFiltro) queryFinal = query(queryFinal, where('estado', '==', estadoFiltro));
+      if (prioridadFiltro) queryFinal = query(queryFinal, where('prioridad', '==', prioridadFiltro));
+      queryFinal = query(queryFinal, orderBy('fecha', 'desc'));
+
+      const snapshot = await getDocs(queryFinal);
+      const conteoPorEstado = { Pendiente: 0, 'En Proceso': 0, Finalizado: 0 };
+
+      snapshot.forEach(doc => {
+        const t = doc.data();
+        const fecha = t.fecha.toDate().toLocaleDateString();
+        const color = t.prioridad === 'Alta' ? 'danger' : t.prioridad === 'Media' ? 'warning' : 'secondary';
+        const iconoPrioridad = t.prioridad === 'Alta' ? 'fa-bolt' : t.prioridad === 'Media' ? 'fa-circle-half-stroke' : 'fa-circle';
+        const iconoEstado = t.estado === 'Pendiente' ? 'fa-hourglass-half' : t.estado === 'En Proceso' ? 'fa-cogs' : 'fa-check-circle';
+        conteoPorEstado[t.estado] = (conteoPorEstado[t.estado] || 0) + 1;
+
+        contenedor.innerHTML += `
+        <div class="col-md-4 mb-3">
+          <div class="card h-100">
+            <div class="card-body">
+              <h5 class="card-title">${t.titulo}</h5>
+              <p class="card-text">${t.descripcion}</p>
+              <span class="badge bg-${color}"><i class="fa fa-${iconoPrioridad}"></i> ${t.prioridad}</span>
+              <span class="badge bg-info"><i class="fa fa-${iconoEstado}"></i> ${t.estado}</span>
+              <div class="text-muted mt-2"><i class="fa fa-calendar"></i> ${fecha}</div>
+            </div>
+          </div>
+        </div>`;
+      });
+
+      const ctx = document.getElementById('chartTickets').getContext('2d');
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(conteoPorEstado),
+          datasets: [{
+            label: 'Cantidad de Pedidos',
+            data: Object.values(conteoPorEstado),
+            backgroundColor: ['#ffc107', '#17a2b8', '#28a745']
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            title: { display: true, text: 'Pedidos por Estado' }
+          }
+        }
+      });
+    }
+  </script>
+</head>
+
+<body class="bg-light">
+  <div class="container py-5">
+
+    <!-- LOGIN SECTION -->
+    <section id="login-section">
+      <h2 class="mb-3">Iniciar sesión</h2>
+      <form id="form-login" class="mb-3">
+        <input type="email" name="email" placeholder="Email" class="form-control mb-2" required>
+        <input type="password" name="password" placeholder="Contraseña" class="form-control mb-2" required>
+        <button class="btn btn-primary w-100">Ingresar</button>
+      </form>
+      <h5>¿No tienes cuenta?</h5>
+      <form id="form-register">
+        <input type="email" name="email" placeholder="Email" class="form-control mb-2" required>
+        <input type="password" name="password" placeholder="Contraseña" class="form-control mb-2" required>
+        <button class="btn btn-secondary w-100">Registrarse</button>
+      </form>
+    </section>
+
+    <!-- DASHBOARD SECTION -->
+    <section id="dashboard-section" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Bienvenido <span id="user-email"></span></h2>
+        <button id="cerrar-sesion" class="btn btn-danger">Cerrar sesión</button>
+      </div>
+
+      <!-- FILTROS -->
+      <div class="row mb-3">
+        <div class="col-md-3">
+          <select id="filtro-estado" class="form-select" onchange="cargarTickets()">
+            <option value="">Todos los Estados</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="En Proceso">En Proceso</option>
+            <option value="Finalizado">Finalizado</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select id="filtro-prioridad" class="form-select" onchange="cargarTickets()">
+            <option value="">Todas las Prioridades</option>
+            <option value="Alta">Alta</option>
+            <option value="Media">Media</option>
+            <option value="Baja">Baja</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ESTADÍSTICAS -->
+      <div class="card mb-4">
+        <div class="card-body">
+          <h5 class="card-title">Estadísticas de Pedidos</h5>
+          <canvas id="chartTickets"></canvas>
+        </div>
+      </div>
+
+      <!-- FORMULARIO NUEVO TICKET -->
+      <form id="form-ticket" class="mb-4">
+        <input name="titulo" placeholder="Título del pedido" class="form-control mb-2" required>
+        <textarea name="descripcion" placeholder="Descripción" class="form-control mb-2" required></textarea>
+        <select name="prioridad" class="form-select mb-2" required>
+          <option value="Alta">Alta</option>
+          <option value="Media">Media</option>
+          <option value="Baja">Baja</option>
+        </select>
+        <button class="btn btn-success w-100">Crear Pedido</button>
+      </form>
+
+      <!-- LISTA DE TICKETS -->
+      <div class="row" id="tickets-list"></div>
+    </section>
+  </div>
+</body>
+
+</html>
